@@ -1,13 +1,17 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Contador de eventos</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
-/* Layout: una sola columna tipo marcador. Arriba el contador con − / +, debajo totales, historial por día y respaldo en Excel. */
+/* Layout: una sola columna tipo marcador. Arriba el contador con − / +, debajo totales, historial por día y respaldo (Excel + Google Sheets). */
 :root {
+  color-scheme: light;
   --bg: #E8EDEF;
   --surface: #F6F8F8;
   --fg: #13212A;
@@ -20,7 +24,6 @@
   --font-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
   --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -36,7 +39,9 @@
 }
 
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
 body {
+  margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-body);
@@ -49,6 +54,7 @@ body {
 .wrap { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
+[hidden] { display: none !important; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -114,6 +120,7 @@ details.adv summary:hover { color: var(--fg); }
   padding: 10px 14px; font-weight: 600; font-size: .92rem;
 }
 .btn-sec:hover { border-color: var(--muted); }
+.btn-sec.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 
 .confirm {
   width: 100%; min-height: 54px; border: 0; border-radius: 10px;
@@ -160,9 +167,13 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
 .empty strong { color: var(--fg); display: block; margin-bottom: 4px; }
 
 .data { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.data h2 { margin: 0; }
 .data-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .data p { margin: 0; font-size: .85rem; color: var(--muted); }
-.data .btn-sec.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.sync-state { font-size: .85rem; font-weight: 600; }
+.sync-state.ok { color: var(--accent); }
+.sync-state.err { color: var(--danger); }
+.cfg { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (max-width: 380px) {
@@ -171,6 +182,8 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
 }
 @media (prefers-reduced-motion: reduce) { .step:active { transform: none; } details.adv summary::before { transition: none; } }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header>
@@ -234,29 +247,48 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     <div id="history"></div>
   </section>
 
-  <section class="data" aria-label="Respaldo en Excel">
-    <h2 style="margin:0">Respaldo en Excel</h2>
+  <section class="data" aria-label="Respaldo y Google Sheets">
+    <h2>Respaldo y Google Sheets</h2>
+    <p class="sync-state" id="syncState" role="status"></p>
     <div class="data-btns">
-      <button class="btn-sec primary" id="exportBtn" type="button" hidden>Descargar Excel</button>
+      <button class="btn-sec primary" id="exportBtn" type="button">Descargar Excel</button>
       <button class="btn-sec" id="importBtn" type="button">Importar Excel</button>
       <input class="visually-hidden" id="importFile" type="file" accept=".xlsx,.xls,.csv" tabindex="-1" aria-label="Elegir archivo para importar">
     </div>
+    <details class="adv" id="sheetsCfg">
+      <summary>Conectar con Google Sheets</summary>
+      <div class="cfg">
+        <label class="lbl" for="sheetUrl">URL de la aplicación web (termina en /exec)</label>
+        <input class="field" id="sheetUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/.../exec">
+        <label class="lbl" for="sheetKey">Clave</label>
+        <input class="field" id="sheetKey" type="text" autocomplete="off" placeholder="La misma que pusiste en el script">
+        <div class="data-btns">
+          <button class="btn-sec primary" id="sheetSave" type="button">Guardar y sincronizar</button>
+          <button class="btn-sec" id="sheetOff" type="button">Desconectar</button>
+        </div>
+        <span class="adv-hint">Con esto conectado, cada registro, cambio o borrado se envía solo a tu hoja de Google. La hoja puede empezar vacía. La página solo escribe en ella: nunca la lee ni la reemplaza entera.</span>
+      </div>
+    </details>
     <p id="storeNote"></p>
-    <p>Para verlo en Google Sheets, descarga el Excel, súbelo a Google Drive y ábrelo con Hojas de cálculo. El archivo trae el historial y una hoja de totales con fórmulas.</p>
   </section>
 </div>
 
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var S = { n: 0, entries: [], filter: null, pending: null, db: null, dl: null, saving: false, editing: null, undo: null };
-  var LS_ENTRIES = 'contador-eventos:v1', LS_NAME = 'contador-eventos:nombre';
+  var S = { n: 0, entries: [], filter: null, pending: null, saving: false, editing: null, undo: null,
+            cfg: null, queue: [], syncing: false };
+  var LS_ENTRIES = 'contador-eventos:v1', LS_NAME = 'contador-eventos:nombre',
+      LS_CFG = 'contador-eventos:sheets', LS_QUEUE = 'contador-eventos:cola';
   var DEFAULT_STATUS = 'Se guarda con la fecha y hora de este momento.';
 
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function newId(ts) { return 'l' + ts + Math.random().toString(36).slice(2, 7); }
+  function keyOf(nombre, ts) { return nombre + '|' + Math.floor(ts / 1000); }
 
   var fmtTime = new Intl.DateTimeFormat('es-CO', { hour: '2-digit', minute: '2-digit' });
   var fmtDay = new Intl.DateTimeFormat('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -373,26 +405,22 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   }
 
   function renderNote() {
-    $('storeNote').textContent = S.db
-      ? 'Tu historial se guarda en esta página y se conserva al cerrarla. El Excel es una copia extra por si quieres respaldarlo o analizarlo.'
-      : 'Tu historial se guarda solo en este navegador. Descarga un Excel de vez en cuando para no perderlo.';
+    $('storeNote').textContent = S.cfg
+      ? 'Tu historial se guarda en este navegador y cada cambio se envía a tu hoja de Google. Puedes abrir esa hoja desde Google Drive cuando quieras.'
+      : 'Tu historial se guarda solo en este navegador. Conecta Google Sheets o descarga un Excel de vez en cuando para no perderlo.';
   }
 
   function renderAll() { renderCounter(); renderChips(); renderTotals(); renderHistory(); renderNote(); }
 
-  /* ---------- almacenamiento ---------- */
-  async function putEntry(rec, id) {
-    if (S.db) {
-      if (id) await S.db.doc('registros/' + id).set({ nombre: rec.nombre, n: rec.n, ts: rec.ts });
-      else await S.db.collection('registros').add({ nombre: rec.nombre, n: rec.n, ts: rec.ts });
-    } else {
-      if (id) {
-        S.entries = S.entries.map(function (e) { return e.id === id ? { id: id, nombre: rec.nombre, n: rec.n, ts: rec.ts } : e; });
-      } else {
-        S.entries.push({ id: 'l' + rec.ts + Math.random().toString(36).slice(2, 7), nombre: rec.nombre, n: rec.n, ts: rec.ts });
-      }
-      lsSet(LS_ENTRIES, S.entries);
-    }
+  /* ---------- almacenamiento local ---------- */
+  function saveLocal() { lsSet(LS_ENTRIES, S.entries); }
+
+  function putEntry(rec, id) {
+    var e = { id: id || newId(rec.ts), nombre: rec.nombre, n: rec.n, ts: rec.ts };
+    if (id) S.entries = S.entries.map(function (x) { return x.id === id ? e : x; });
+    else S.entries.push(e);
+    saveLocal();
+    return e;
   }
 
   function clearForm() {
@@ -401,24 +429,83 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     $('adv').open = false;
   }
 
+  /* ---------- Google Sheets (Apps Script) ---------- */
+  function syncText(msg, kind) { var el = $('syncState'); el.textContent = msg; el.className = 'sync-state' + (kind ? ' ' + kind : ''); }
+
+  async function sheetSend(ops) {
+    var r = await fetch(S.cfg.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: S.cfg.key, action: 'ops', ops: ops })
+    });
+    var j = await r.json();
+    if (!j || !j.ok) throw new Error((j && j.error) || 'respuesta no válida');
+  }
+
+  /* Cada cambio queda en una cola (guardada en el navegador) hasta que la hoja confirma que lo recibió. */
+  function putOp(e) { return { op: 'put', id: e.id, nombre: e.nombre, n: e.n, ts: e.ts }; }
+  function enqueue(ops) {
+    if (!S.cfg) return;
+    S.queue = S.queue.concat(ops); lsSet(LS_QUEUE, S.queue);
+    queueSync();
+  }
+
+  var syncTimer = null;
+  function queueSync() {
+    if (!S.cfg) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 700);
+  }
+
+  async function syncNow() {
+    if (!S.cfg || S.syncing) { if (S.cfg && S.syncing) queueSync(); return; }
+    if (!S.queue.length) { syncText('Google Sheets conectado · todo guardado.', 'ok'); return; }
+    S.syncing = true; syncText('Guardando en Google Sheets…');
+    var cfg0 = S.cfg, ops = S.queue.slice(0, 200);
+    try {
+      await sheetSend(ops);
+      if (S.cfg === cfg0) { S.queue = S.queue.slice(ops.length); lsSet(LS_QUEUE, S.queue); }
+      syncText('Google Sheets conectado · guardado a las ' + fmtTime.format(new Date()), 'ok');
+      S.syncing = false;
+      if (S.queue.length) queueSync();     /* hubo cambios mientras se enviaba */
+      return;
+    } catch (err) {
+      syncText('No se pudo guardar en Google Sheets (' + S.queue.length + ' cambios pendientes). Tus datos siguen aquí y se reintentará al próximo cambio o al recargar. Revisa la URL y la clave.', 'err');
+    }
+    S.syncing = false;
+  }
+
+  function connectSheets() {
+    var url = $('sheetUrl').value.trim(), key = $('sheetKey').value.trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(url)) { syncText('La URL debe empezar con https://script.google.com/macros/s/ y terminar en /exec.', 'err'); return; }
+    if (!key) { syncText('Escribe la clave que pusiste en el script.', 'err'); return; }
+    S.cfg = { url: url, key: key }; lsSet(LS_CFG, S.cfg);
+    /* al conectar se envía todo el historial de aquí; si un registro ya está en la hoja, solo se actualiza */
+    S.queue = sorted(S.entries).reverse().map(putOp); lsSet(LS_QUEUE, S.queue);
+    renderNote();
+    syncNow();
+  }
+
+  function disconnectSheets() {
+    S.cfg = null; lsDel(LS_CFG); S.queue = []; lsDel(LS_QUEUE);
+    $('sheetUrl').value = ''; $('sheetKey').value = '';
+    syncText('Google Sheets desconectado. Tu historial sigue en este navegador.');
+    renderNote();
+  }
+
   /* ---------- acciones ---------- */
-  async function save() {
+  function save() {
     var nombre = $('nombre').value.trim();
     if (!nombre || S.n < 1 || S.saving) return;
     var ts = whenValue() || Date.now();
     var rec = { nombre: nombre, n: S.n, ts: ts };
     var wasEditing = S.editing;
-    S.saving = true; renderCounter();
-    try {
-      await putEntry(rec, wasEditing);
-      lsSet(LS_NAME, nombre);
-      flash(wasEditing ? 'Cambios guardados.' : 'Guardado: ' + nombre + ' +' + rec.n);
-      clearForm();
-    } catch (e) {
-      flash('No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.', true);
-    }
-    S.saving = false;
+    var e = putEntry(rec, wasEditing);
+    lsSet(LS_NAME, nombre);
+    flash(wasEditing ? 'Cambios guardados.' : 'Guardado: ' + nombre + ' +' + rec.n);
+    clearForm();
     renderAll();
+    enqueue([putOp(e)]);
   }
 
   function startEdit(id) {
@@ -441,32 +528,29 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   }
 
   var undoTimer = null;
-  async function remove(id) {
+  function remove(id) {
     var rec = S.entries.filter(function (x) { return x.id === id; })[0];
-    if (!rec) { S.pending = null; renderHistory(); return; }
-    try {
-      if (S.db) { await S.db.doc('registros/' + id).delete(); }
-      else { S.entries = S.entries.filter(function (e) { return e.id !== id; }); lsSet(LS_ENTRIES, S.entries); }
-      if (S.editing === id) { cancelEdit(); }
-      S.undo = { id: rec.id, nombre: rec.nombre, n: rec.n, ts: rec.ts };
-      $('undo').hidden = false;
-      clearTimeout(undoTimer);
-      undoTimer = setTimeout(function () { S.undo = null; $('undo').hidden = true; }, 10000);
-      flash('Registro borrado: ' + rec.nombre + ' +' + rec.n);
-    } catch (e) { flash('No se pudo borrar.', true); }
     S.pending = null;
+    if (!rec) { renderHistory(); return; }
+    S.entries = S.entries.filter(function (e) { return e.id !== id; });
+    saveLocal();
+    if (S.editing === id) { cancelEdit(); }
+    S.undo = { id: rec.id, nombre: rec.nombre, n: rec.n, ts: rec.ts };
+    $('undo').hidden = false;
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(function () { S.undo = null; $('undo').hidden = true; }, 10000);
+    flash('Registro borrado: ' + rec.nombre + ' +' + rec.n);
     renderAll();
+    enqueue([{ op: 'del', id: rec.id }]);
   }
 
-  async function undoDelete() {
+  function undoDelete() {
     var r = S.undo; if (!r) return;
     S.undo = null; $('undo').hidden = true; clearTimeout(undoTimer);
-    try {
-      if (S.db) { await S.db.doc('registros/' + r.id).set({ nombre: r.nombre, n: r.n, ts: r.ts }); }
-      else { S.entries.push(r); lsSet(LS_ENTRIES, S.entries); }
-      flash('Registro recuperado.');
-    } catch (e) { flash('No se pudo recuperar el registro.', true); }
+    S.entries.push(r); saveLocal();
+    flash('Registro recuperado.');
     renderAll();
+    enqueue([putOp(r)]);
   }
 
   /* ---------- Excel: exportar e importar ---------- */
@@ -474,8 +558,7 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   function serialTime(d) { return (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()) / 86400; }
 
   function exportXlsx() {
-    if (!window.XLSX) { flash('No se pudo cargar el generador de Excel. Recarga la página.', true); return; }
-    if (!S.dl) return;
+    if (!window.XLSX) { flash('No se pudo cargar el generador de Excel. Revisa tu conexión y recarga.', true); return; }
     if (!S.entries.length) { flash('Aún no hay registros para exportar.', true); return; }
     var list = sorted(S.entries).reverse();
     var rows = [['Fecha', 'Hora', 'Evento', 'Cantidad']];
@@ -500,15 +583,10 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Historial');
     XLSX.utils.book_append_sheet(wb, ws2, 'Totales');
-    var buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     var now = new Date();
     var filename = 'contador-eventos-' + now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + '.xlsx';
-    S.dl.save({ filename: filename, data: buf }).then(function () {
-      flash('Excel guardado: ' + filename);
-    }).catch(function (err) {
-      if (err && err.code === 'declined') return;
-      flash('No se pudo descargar el archivo.', true);
-    });
+    try { XLSX.writeFile(wb, filename); flash('Excel descargado: ' + filename); }
+    catch (e) { flash('No se pudo crear el archivo.', true); }
   }
 
   function parseTs(fecha, hora) {
@@ -530,30 +608,30 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   }
 
   async function importFile(file) {
-    if (!window.XLSX) { flash('No se pudo cargar el lector de Excel. Recarga la página.', true); return; }
+    if (!window.XLSX) { flash('No se pudo cargar el lector de Excel. Revisa tu conexión y recarga.', true); return; }
     try {
       var buf = await file.arrayBuffer();
       var wb = XLSX.read(buf, { type: 'array' });
       var sheetName = wb.SheetNames.indexOf('Historial') >= 0 ? 'Historial' : wb.SheetNames[0];
       var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true });
       var have = {};
-      S.entries.forEach(function (e) { have[e.nombre + '|' + Math.floor(e.ts / 1000)] = true; });
-      var add = [], skipped = 0;
+      S.entries.forEach(function (e) { have[keyOf(e.nombre, e.ts)] = true; });
+      var added = 0, skipped = 0, nuevos = [];
       rows.slice(0, 5001).forEach(function (r, i) {
         if (!r || (i === 0 && typeof r[0] === 'string' && /fecha/i.test(r[0]))) return;
         var nombre = String(r[2] == null ? '' : r[2]).trim().slice(0, 60);
         var n = Math.round(Number(r[3]));
         var ts = parseTs(r[0], r[1]);
         if (!nombre || !(n > 0) || isNaN(ts)) { skipped++; return; }
-        var key = nombre + '|' + Math.floor(ts / 1000);
+        var key = keyOf(nombre, ts);
         if (have[key]) { skipped++; return; }
-        have[key] = true; add.push({ nombre: nombre, n: n, ts: ts });
+        have[key] = true;
+        var e = { id: newId(ts), nombre: nombre, n: n, ts: ts };
+        S.entries.push(e); nuevos.push(putOp(e)); added++;
       });
-      if (!add.length) { flash('No se encontraron registros nuevos en el archivo.', true); return; }
-      setStatus('Importando ' + add.length + ' registros…');
-      for (var i = 0; i < add.length; i++) await putEntry(add[i], null);
-      flash('Importados ' + add.length + ' registros' + (skipped ? ' (' + skipped + ' omitidos por repetidos o incompletos).' : '.'));
-      renderAll();
+      if (!added) { flash('No se encontraron registros nuevos en el archivo.', true); return; }
+      saveLocal(); renderAll(); enqueue(nuevos);
+      flash('Importados ' + added + ' registros' + (skipped ? ' (' + skipped + ' omitidos por repetidos o incompletos).' : '.'));
     } catch (err) {
       flash('No se pudo leer el archivo. Usa un Excel descargado desde esta página.', true);
     }
@@ -576,6 +654,8 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     var f = ev.target.files && ev.target.files[0]; ev.target.value = '';
     if (f) importFile(f);
   });
+  $('sheetSave').addEventListener('click', connectSheets);
+  $('sheetOff').addEventListener('click', disconnectSheets);
 
   $('chips').addEventListener('click', function (ev) {
     var b = ev.target.closest('.chip'); if (!b) return;
@@ -601,23 +681,16 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   /* ---------- arranque ---------- */
   $('today').textContent = new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   S.entries = lsGet(LS_ENTRIES, []);
+  S.cfg = lsGet(LS_CFG, null);
+  S.queue = S.cfg ? lsGet(LS_QUEUE, []) : [];
+  lsDel('contador-eventos:pendiente');   /* marca de la versión anterior */
   $('nombre').value = lsGet(LS_NAME, '') || '';
+  if (S.cfg) { $('sheetUrl').value = S.cfg.url; $('sheetKey').value = S.cfg.key; }
   setStatus(idleStatus());
+  syncText(S.cfg ? 'Google Sheets conectado.' : 'Google Sheets: sin conectar.');
   renderAll();
-
-  /* Con db el historial queda guardado fuera de la página. Sin db usa este navegador. */
-  var useCap = function (n) { return (window.claude && window.claude.use) ? window.claude.use(n) : Promise.resolve(null); };
-  useCap('downloads').then(function (dl) { S.dl = dl; $('exportBtn').hidden = !dl; }).catch(function () {});
-  useCap('db').then(function (db) {
-    if (!db) return;
-    S.db = db; renderNote();
-    db.collection('registros').orderBy('ts', 'desc').limit(1000).onSnapshot(function (snap) {
-      S.entries = snap.docs.map(function (d) { var x = d.data(); return { id: d.id, nombre: String(x.nombre || ''), n: Number(x.n) || 0, ts: Number(x.ts) || 0 }; });
-      if (S.filter && !S.entries.some(function (e) { return e.nombre === S.filter; })) S.filter = null;
-      renderAll();
-    }, function () { S.db = null; renderNote(); flash('No se pudo conectar el guardado de la página. Se usará este navegador.', true); });
-  }).catch(function () {});
+  if (S.cfg) syncNow();
 })();
 </script>
-
-</body></html>
+</body>
+</html>
