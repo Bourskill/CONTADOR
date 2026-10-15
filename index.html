@@ -114,6 +114,10 @@ details.adv summary:hover { color: var(--fg); }
 .adv-body { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
 .adv-row { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
 .adv-row .field { flex: 1 1 200px; }
+.adv-row .when-date { flex: 1 1 170px; min-width: 0; }
+.adv-row .when-time { flex: 1 1 120px; min-width: 0; }
+.adv-row .name-field .field { flex: none; }
+#nowBtn { align-self: flex-start; }
 .adv-hint { font-size: .82rem; color: var(--muted); }
 .btn-sec {
   border: 1px solid var(--line); background: transparent; border-radius: 8px;
@@ -215,12 +219,18 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     <details class="adv" id="adv">
       <summary>Opciones avanzadas</summary>
       <div class="adv-body">
-        <label class="lbl" for="cuando">Fecha y hora del registro</label>
         <div class="adv-row">
-          <input class="field" id="cuando" type="datetime-local">
-          <button class="btn-sec" id="nowBtn" type="button">Usar ahora</button>
+          <span class="name-field when-date">
+            <label class="lbl" for="cuandoFecha">Fecha del registro</label>
+            <input class="field" id="cuandoFecha" type="date">
+          </span>
+          <span class="name-field when-time">
+            <label class="lbl" for="cuandoHora">Hora (opcional)</label>
+            <input class="field" id="cuandoHora" type="time">
+          </span>
         </div>
-        <span class="adv-hint">Si lo dejas vacío, se usa la fecha y hora del momento en que confirmas. Sirve para anotar algo que pasó antes.</span>
+        <button class="btn-sec" id="nowBtn" type="button">Usar ahora</button>
+        <span class="adv-hint">Si dejas la fecha vacía, se usa el momento en que confirmas. Si eliges fecha pero no hora, se usa la hora actual en ese día. Sirve para anotar algo que pasó antes.</span>
       </div>
     </details>
 
@@ -300,9 +310,10 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     if (dayKey(ts) === dayKey(now - 86400000)) return 'Ayer';
     return fmtDay.format(new Date(ts));
   }
-  function toLocalInput(ts) {
-    var d = new Date(ts);
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  function setWhen(ts) {
+    var d = ts ? new Date(ts) : null;
+    $('cuandoFecha').value = d ? d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) : '';
+    $('cuandoHora').value = d ? pad(d.getHours()) + ':' + pad(d.getMinutes()) : '';
   }
   function sorted(list) { return list.slice().sort(function (a, b) { return b.ts - a.ts; }); }
 
@@ -321,19 +332,24 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   }
 
   /* ---------- render ---------- */
+  /* null = sin fecha (usar ahora); NaN = fecha u hora a medio escribir; número = momento elegido */
   function whenValue() {
-    var v = $('cuando').value;
-    if (!v) return null;
-    var t = new Date(v).getTime();
-    return isNaN(t) ? null : t;
+    var f = $('cuandoFecha'), h = $('cuandoHora');
+    if (f.validity.badInput || h.validity.badInput) return NaN;
+    var dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(f.value);
+    if (!dm) return h.value ? NaN : null;            /* hora sin fecha */
+    var now = new Date(), hm = /^(\d{2}):(\d{2})/.exec(h.value);
+    var hh = hm ? +hm[1] : now.getHours(), mi = hm ? +hm[2] : now.getMinutes(), ss = hm ? 0 : now.getSeconds();
+    return new Date(+dm[1], +dm[2] - 1, +dm[3], hh, mi, ss).getTime();
   }
 
   var statusTimer = null;
   function setStatus(msg, isErr) { var el = $('status'); el.textContent = msg; el.className = 'status' + (isErr ? ' err' : ''); }
   function idleStatus() {
-    if (S.editing) return 'Cambia lo que necesites y pulsa Guardar cambios.';
     var w = whenValue();
-    return w ? 'Se guardará con fecha elegida: ' + fmtFull.format(new Date(w)) + '.' : DEFAULT_STATUS;
+    if (isNaN(w)) return 'Completa la fecha (día, mes y año) o pulsa Usar ahora.';
+    if (S.editing) return 'Cambia lo que necesites y pulsa Guardar cambios.';
+    return w ? 'Se guardará con fecha elegida: ' + fmtFull.format(new Date(w)) : DEFAULT_STATUS;
   }
   function flash(msg, isErr) {
     setStatus(msg, isErr);
@@ -425,7 +441,7 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
 
   function clearForm() {
     S.n = 0; S.editing = null;
-    $('cuando').value = '';
+    setWhen(null);
     $('adv').open = false;
   }
 
@@ -514,7 +530,9 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   function save() {
     var nombre = $('nombre').value.trim();
     if (!nombre || S.n < 1 || S.saving) return;
-    var ts = whenValue() || Date.now();
+    var w = whenValue();
+    if (isNaN(w)) { $('adv').open = true; flash('La fecha está incompleta: completa día, mes y año, o pulsa Usar ahora.', true); return; }
+    var ts = w || Date.now();
     var rec = { nombre: nombre, n: S.n, ts: ts };
     var wasEditing = S.editing;
     var e = putEntry(rec, wasEditing);
@@ -530,7 +548,7 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     if (!e) return;
     S.editing = id; S.pending = null;
     $('nombre').value = e.nombre; S.n = e.n;
-    $('cuando').value = toLocalInput(e.ts);
+    setWhen(e.ts);
     $('adv').open = true;
     setStatus(idleStatus());
     renderAll();
@@ -661,8 +679,12 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   $('confirm').addEventListener('click', save);
   $('nombre').addEventListener('input', renderCounter);
   $('nombre').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') save(); });
-  $('cuando').addEventListener('input', function () { setStatus(idleStatus()); });
-  $('nowBtn').addEventListener('click', function () { $('cuando').value = ''; setStatus(idleStatus()); });
+  ['cuandoFecha', 'cuandoHora'].forEach(function (id) {
+    $(id).addEventListener('input', function () { setStatus(idleStatus()); });
+    $(id).addEventListener('change', function () { setStatus(idleStatus()); });
+    $(id).addEventListener('blur', function () { setStatus(idleStatus()); });
+  });
+  $('nowBtn').addEventListener('click', function () { setWhen(null); setStatus(idleStatus()); });
   $('cancelEdit').addEventListener('click', cancelEdit);
   $('undo').addEventListener('click', undoDelete);
   $('exportBtn').addEventListener('click', exportXlsx);
