@@ -448,15 +448,19 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     }
     try { j = await r.json(); }
     catch (e) { throw new Error('El script no respondió como se esperaba (código ' + r.status + '). Revisa que pegaste el Code.gs nuevo, que autorizaste los permisos y que publicaste una versión nueva.'); }
-    if (j && j.ok) return;
+    if (j && j.ok) { S.scriptVer = j.version; return; }
     var msg = (j && j.error) || 'respuesta no válida';
     if (msg === 'Clave incorrecta') msg = 'La clave no coincide con la de CLAVE en el script.';
-    else if (msg === 'Acción no válida') msg = 'La implementación todavía tiene el código viejo. En Apps Script: Implementar > Gestionar implementaciones > editar > Versión: Nueva versión.';
+    else if (msg === 'Acción no válida' || /timeZone/.test(msg)) msg = 'La implementación todavía tiene el código viejo. En Apps Script: Implementar > Gestionar implementaciones > editar > Versión: Nueva versión.';
     throw new Error(msg);
   }
 
   /* Cada cambio queda en una cola (guardada en el navegador) hasta que la hoja confirma que lo recibió. */
-  function putOp(e) { return { op: 'put', id: e.id, nombre: e.nombre, n: e.n, ts: e.ts }; }
+  /* fecha y hora van ya calculadas con la hora de este dispositivo, como números de fecha de hoja de cálculo */
+  function putOp(e) {
+    var d = new Date(e.ts);
+    return { op: 'put', id: e.id, nombre: e.nombre, n: e.n, ts: e.ts, fecha: serialDate(d), hora: serialTime(d) };
+  }
   function enqueue(ops) {
     if (!S.cfg) return;
     S.queue = S.queue.concat(ops); lsSet(LS_QUEUE, S.queue);
@@ -478,7 +482,7 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     try {
       await sheetSend(ops);
       if (S.cfg === cfg0) { S.queue = S.queue.slice(ops.length); lsSet(LS_QUEUE, S.queue); }
-      syncText('Google Sheets conectado · guardado a las ' + fmtTime.format(new Date()), 'ok');
+      syncText('Google Sheets conectado · guardado a las ' + fmtTime.format(new Date()) + ' (script v' + (S.scriptVer || '?') + ')', 'ok');
       S.syncing = false;
       if (S.queue.length) queueSync();     /* hubo cambios mientras se enviaba */
       return;

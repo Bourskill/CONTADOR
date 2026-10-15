@@ -10,6 +10,7 @@
 // CAMBIA ESTA CLAVE por una frase tuya. La misma va en la página.
 var CLAVE = 'cambia-esta-clave';
 var HOJA = 'Historial';
+var VERSION = 3; // abre la URL /exec en el navegador: si no dice "version": 3, falta publicar una versión nueva
 var FORMATOS = [['dd/mm/yyyy', 'hh:mm:ss', 'General', '0', '@']];
 
 function salida_(obj) {
@@ -38,16 +39,14 @@ function hoja_() {
   return sh;
 }
 
-// Algunas hojas nuevas no traen zona horaria: se usa la del script y, si no hay, la de Colombia.
-function zona_() {
-  var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || Session.getScriptTimeZone();
-  return tz ? String(tz) : 'America/Bogota';
-}
-
-function fila_(r, tz) {
-  var p = Utilities.formatDate(new Date(Number(r.ts)), tz, 'yyyy-MM-dd-HH-mm-ss').split('-').map(Number);
-  var fecha = Math.floor(Date.UTC(p[0], p[1] - 1, p[2]) / 86400000) + 25569;
-  var hora = (p[3] * 3600 + p[4] * 60 + p[5]) / 86400;
+// La página envía fecha y hora ya calculadas con la hora del dispositivo, así no depende de la zona horaria de la hoja.
+function fila_(r) {
+  var fecha = Number(r.fecha), hora = Number(r.hora);
+  if (!(fecha > 0) || !(hora >= 0)) {   // envío sin fecha: se calcula con la hora de Colombia (UTC-5)
+    var local = Number(r.ts) - 5 * 3600000;
+    fecha = Math.floor(local / 86400000) + 25569;
+    hora = (local % 86400000) / 86400000;
+  }
   var nombre = String(r.nombre).replace(/^([=+\-@])/, "'$1"); // evita que un nombre se lea como fórmula
   return [fecha, hora, nombre, Number(r.n), String(r.id)];
 }
@@ -63,7 +62,6 @@ function doPost(e) {
     if (d.action !== 'ops' || !Array.isArray(d.ops)) return salida_({ ok: false, error: 'Acción no válida' });
 
     var sh = hoja_();
-    var tz = zona_();
     var ultima = sh.getLastRow();
     var filaDe = {};
     if (ultima > 1) {
@@ -77,14 +75,14 @@ function doPost(e) {
       var id = String(op.id), fila = filaDe[id];
       if (op.op === 'put') {
         if (!fila) { fila = sh.getLastRow() + 1; filaDe[id] = fila; }
-        sh.getRange(fila, 1, 1, 5).setValues([fila_(op, tz)]).setNumberFormats(FORMATOS);
+        sh.getRange(fila, 1, 1, 5).setValues([fila_(op)]).setNumberFormats(FORMATOS);
       } else if (op.op === 'del' && fila) {
         sh.deleteRow(fila);
         delete filaDe[id];
         for (var k in filaDe) if (filaDe[k] > fila) filaDe[k]--;
       }
     });
-    return salida_({ ok: true, count: d.ops.length });
+    return salida_({ ok: true, count: d.ops.length, version: VERSION });
   } catch (err) {
     return salida_({ ok: false, error: String(err) });
   } finally {
@@ -94,5 +92,5 @@ function doPost(e) {
 
 // Solo para comprobar en el navegador que la aplicación web está activa.
 function doGet() {
-  return salida_({ ok: true, mensaje: 'Contador de eventos: listo para recibir datos.' });
+  return salida_({ ok: true, version: VERSION, mensaje: 'Contador de eventos: listo para recibir datos.' });
 }
