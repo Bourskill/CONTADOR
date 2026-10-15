@@ -5,13 +5,18 @@
  *   Ejecutar como: Yo
  *   Quién tiene acceso: Cualquier persona
  * La hoja puede estar vacía: las pestañas "Historial" y "Totales" se crean solas.
+ *
+ * Leer (doGet) es público: cualquiera con el enlace de la página ve el progreso.
+ * Escribir (doPost) exige la CLAVE: solo quien la conoce puede registrar, editar o borrar.
  */
 
-// CAMBIA ESTA CLAVE por una frase tuya. La misma va en la página.
+// CAMBIA ESTA CLAVE por una frase tuya. No la pongas en la página: se escribe en el navegador de quien registra.
 var CLAVE = 'cambia-esta-clave';
 var HOJA = 'Historial';
-var VERSION = 3; // abre la URL /exec en el navegador: si no dice "version": 3, falta publicar una versión nueva
-var FORMATOS = [['dd/mm/yyyy', 'hh:mm:ss', 'General', '0', '@']];
+var VERSION = 4; // abre la URL /exec en el navegador: si no dice "version":4, falta publicar una versión nueva
+var COLS = 6;
+var ENCABEZADOS = [['Fecha', 'Hora', 'Evento', 'Cantidad', 'ID (no borrar)', 'Marca de tiempo (no borrar)']];
+var FORMATOS = [['dd/mm/yyyy', 'hh:mm:ss', 'General', '0', '@', '0']];
 
 function salida_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
@@ -23,11 +28,11 @@ function hoja_() {
   var sh = ss.getSheetByName(HOJA);
   if (!sh) {
     sh = ss.insertSheet(HOJA);
-    sh.getRange(1, 1, 1, 5)
-      .setValues([['Fecha', 'Hora', 'Evento', 'Cantidad', 'ID (no borrar)']])
-      .setFontWeight('bold');
     sh.setFrozenRows(1);
     sh.setColumnWidth(3, 240);
+  }
+  if (sh.getRange(1, COLS).getValue() === '') {   // hoja nueva o de una versión anterior con 5 columnas
+    sh.getRange(1, 1, 1, COLS).setValues(ENCABEZADOS).setFontWeight('bold');
   }
   if (!ss.getSheetByName('Totales')) {
     var t = ss.insertSheet('Totales');
@@ -48,11 +53,12 @@ function fila_(r) {
     hora = (local % 86400000) / 86400000;
   }
   var nombre = String(r.nombre).replace(/^([=+\-@])/, "'$1"); // evita que un nombre se lea como fórmula
-  return [fecha, hora, nombre, Number(r.n), String(r.id)];
+  return [fecha, hora, nombre, Number(r.n), String(r.id), Number(r.ts)];
 }
 
-// La página envía cambios sueltos: { op: 'put', id, nombre, n, ts } o { op: 'del', id }.
+// La página envía cambios sueltos: { op: 'put', id, nombre, n, ts, fecha, hora } o { op: 'del', id }.
 // 'put' agrega la fila o la actualiza si ese ID ya existe; 'del' borra la fila de ese ID.
+// Con ops vacío sirve para comprobar la clave.
 function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -75,7 +81,7 @@ function doPost(e) {
       var id = String(op.id), fila = filaDe[id];
       if (op.op === 'put') {
         if (!fila) { fila = sh.getLastRow() + 1; filaDe[id] = fila; }
-        sh.getRange(fila, 1, 1, 5).setValues([fila_(op)]).setNumberFormats(FORMATOS);
+        sh.getRange(fila, 1, 1, COLS).setValues([fila_(op)]).setNumberFormats(FORMATOS);
       } else if (op.op === 'del' && fila) {
         sh.deleteRow(fila);
         delete filaDe[id];
@@ -90,7 +96,21 @@ function doPost(e) {
   }
 }
 
-// Solo para comprobar en el navegador que la aplicación web está activa.
+// Público: devuelve todos los registros para que la página muestre el progreso.
 function doGet() {
-  return salida_({ ok: true, version: VERSION, mensaje: 'Contador de eventos: listo para recibir datos.' });
+  try {
+    var sh = hoja_();
+    var ultima = sh.getLastRow();
+    var rows = [];
+    if (ultima > 1) {
+      sh.getRange(2, 1, ultima - 1, COLS).getValues().forEach(function (r) {
+        var id = String(r[4]), n = Number(r[3]), ts = Number(r[5]);
+        if (!ts && r[0] instanceof Date) ts = r[0].getTime();   // fila de una versión anterior sin marca de tiempo
+        if (id && r[2] !== '' && n > 0 && ts > 0) rows.push({ id: id, nombre: String(r[2]).replace(/^'/, ''), n: n, ts: ts });
+      });
+    }
+    return salida_({ ok: true, version: VERSION, rows: rows });
+  } catch (err) {
+    return salida_({ ok: false, error: String(err) });
+  }
 }

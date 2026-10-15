@@ -257,26 +257,31 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     <div id="history"></div>
   </section>
 
-  <section class="data" aria-label="Respaldo y Google Sheets">
-    <h2>Respaldo y Google Sheets</h2>
+  <section class="data" aria-label="Datos">
+    <h2>Datos</h2>
     <p class="sync-state" id="syncState" role="status"></p>
     <div class="data-btns">
+      <button class="btn-sec" id="refreshBtn" type="button">Actualizar</button>
       <button class="btn-sec primary" id="exportBtn" type="button">Descargar Excel</button>
-      <button class="btn-sec" id="importBtn" type="button">Importar Excel</button>
+      <button class="btn-sec" id="importBtn" type="button" hidden>Importar Excel</button>
       <input class="visually-hidden" id="importFile" type="file" accept=".xlsx,.xls,.csv" tabindex="-1" aria-label="Elegir archivo para importar">
     </div>
-    <details class="adv" id="sheetsCfg">
-      <summary>Conectar con Google Sheets</summary>
+    <details class="adv" id="ownerCfg">
+      <summary id="ownerSummary">Modo edición</summary>
       <div class="cfg">
-        <label class="lbl" for="sheetUrl">URL de la aplicación web (termina en /exec)</label>
-        <input class="field" id="sheetUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/.../exec">
-        <label class="lbl" for="sheetKey">Clave</label>
-        <input class="field" id="sheetKey" type="text" autocomplete="off" placeholder="La misma que pusiste en el script">
-        <div class="data-btns">
-          <button class="btn-sec primary" id="sheetSave" type="button">Guardar y sincronizar</button>
-          <button class="btn-sec" id="sheetOff" type="button">Desconectar</button>
+        <div id="ownerIn">
+          <label class="lbl" for="sheetKey">Clave para registrar</label>
+          <input class="field" id="sheetKey" type="password" autocomplete="off" placeholder="La misma que pusiste en el script">
+          <div class="data-btns" style="margin-top:8px">
+            <button class="btn-sec primary" id="loginBtn" type="button">Entrar</button>
+          </div>
+          <span class="adv-hint">Quien abre la página solo ve el progreso. Con la clave puedes sumar, editar y borrar. La clave se guarda solo en este navegador.</span>
         </div>
-        <span class="adv-hint">Con esto conectado, cada registro, cambio o borrado se envía solo a tu hoja de Google. La hoja puede empezar vacía. La página solo escribe en ella: nunca la lee ni la reemplaza entera.</span>
+        <div id="ownerOut" hidden>
+          <div class="data-btns">
+            <button class="btn-sec" id="logoutBtn" type="button">Salir del modo edición</button>
+          </div>
+        </div>
       </div>
     </details>
     <p id="storeNote"></p>
@@ -286,10 +291,12 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
+  /* Aplicación web de Apps Script (Code.gs). Leer es público; escribir exige la clave, que nunca va en este archivo. */
+  var SHEET_URL = 'https://script.google.com/macros/s/AKfycby7WB1QT_35fJ31H4j3mKkJB6G6CvP0HIEvz5iYQd2MgOoM5GDwqKaa-mpewHaphe6ghQ/exec';
   var S = { n: 0, entries: [], filter: null, pending: null, saving: false, editing: null, undo: null,
-            cfg: null, queue: [], syncing: false };
+            key: null, queue: [], syncing: false, rows: null, loading: false, mut: 0 };
   var LS_ENTRIES = 'contador-eventos:v1', LS_NAME = 'contador-eventos:nombre',
-      LS_CFG = 'contador-eventos:sheets', LS_QUEUE = 'contador-eventos:cola';
+      LS_KEY = 'contador-eventos:clave', LS_QUEUE = 'contador-eventos:cola';
   var DEFAULT_STATUS = 'Se guarda con la fecha y hora de este momento.';
 
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
@@ -358,6 +365,11 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   }
 
   function renderCounter() {
+    $('counterCard').hidden = !S.key;
+    $('importBtn').hidden = !S.key;
+    $('ownerIn').hidden = !!S.key;
+    $('ownerOut').hidden = !S.key;
+    $('ownerSummary').textContent = S.key ? 'Modo edición: activo' : 'Modo edición';
     var name = $('nombre').value.trim();
     $('num').textContent = S.n;
     $('tally').innerHTML = tallySvg(S.n);
@@ -397,7 +409,11 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     $('clearFilter').hidden = !S.filter;
     $('histTitle').textContent = S.filter ? 'Historial · ' + S.filter : 'Historial';
     if (!list.length) {
-      $('history').innerHTML = '<div class="empty"><strong>Todavía no hay registros</strong>Escribe qué cuentas, suma con + y pulsa Confirmar. Cada registro aparecerá aquí con su fecha y hora.</div>';
+      $('history').innerHTML = !S.rows && !S.entries.length
+        ? '<div class="empty"><strong>Cargando registros…</strong>Se están leyendo desde la hoja de Google.</div>'
+        : '<div class="empty"><strong>Todavía no hay registros</strong>' + (S.key
+          ? 'Escribe qué cuentas, suma con + y pulsa Confirmar. Cada registro aparecerá aquí con su fecha y hora.'
+          : 'Cuando se registre algo, aparecerá aquí con su fecha y hora.') + '</div>';
       return;
     }
     var html = '', cur = null, groups = [];
@@ -412,8 +428,8 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
         var sure = S.pending === e.id;
         html += '<div class="entry' + (S.editing === e.id ? ' is-editing' : '') + '"><span class="en">' + esc(e.nombre) + '<span class="et">' + fmtTime.format(new Date(e.ts)) + '</span></span>' +
           '<span class="ea">+' + e.n + '</span>' +
-          '<span class="acts"><button type="button" class="act" data-edit="' + esc(e.id) + '">Editar</button>' +
-          '<button type="button" class="act' + (sure ? ' sure' : '') + '" data-del="' + esc(e.id) + '">' + (sure ? '¿Borrar?' : 'Borrar') + '</button></span></div>';
+          (S.key ? '<span class="acts"><button type="button" class="act" data-edit="' + esc(e.id) + '">Editar</button>' +
+          '<button type="button" class="act' + (sure ? ' sure' : '') + '" data-del="' + esc(e.id) + '">' + (sure ? '¿Borrar?' : 'Borrar') + '</button></span>' : '<span></span>') + '</div>';
       });
       html += '</div>';
     });
@@ -421,9 +437,9 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   }
 
   function renderNote() {
-    $('storeNote').textContent = S.cfg
-      ? 'Tu historial se guarda en este navegador y cada cambio se envía a tu hoja de Google. Puedes abrir esa hoja desde Google Drive cuando quieras.'
-      : 'Tu historial se guarda solo en este navegador. Conecta Google Sheets o descarga un Excel de vez en cuando para no perderlo.';
+    $('storeNote').textContent = S.key
+      ? 'Cada registro, cambio o borrado se guarda en la hoja de Google y lo ven todos los que abren esta página.'
+      : 'Estás viendo el progreso guardado en Google Sheets. Se actualiza solo cada minuto.';
   }
 
   function renderAll() { renderCounter(); renderChips(); renderTotals(); renderHistory(); renderNote(); }
@@ -448,27 +464,69 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   /* ---------- Google Sheets (Apps Script) ---------- */
   function syncText(msg, kind) { var el = $('syncState'); el.textContent = msg; el.className = 'sync-state' + (kind ? ' ' + kind : ''); }
 
-  /* Los errores salen ya explicados para mostrarlos tal cual en la tarjeta de Sheets. */
-  async function sheetSend(ops) {
+  var OLD_SCRIPT = 'La hoja todavía tiene publicado el código anterior (se necesita la versión 4). En Apps Script: pega el Code.gs nuevo y ve a Implementar > Gestionar implementaciones > editar > Versión: Nueva versión.';
+
+  /* Los errores salen ya explicados para mostrarlos tal cual en la tarjeta de Datos. */
+  async function sheetCall(opts) {
     var r, j;
-    try {
-      r = await fetch(S.cfg.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ token: S.cfg.key, action: 'ops', ops: ops })
-      });
-    } catch (e) {
+    try { r = await fetch(opts ? SHEET_URL : SHEET_URL + '?_=' + Date.now(), opts); }
+    catch (e) {
       throw new Error(navigator.onLine === false
         ? 'No hay conexión a internet.'
-        : 'Google no dejó entrar a la página. Revisa que la implementación tenga "Quién tiene acceso: Cualquier persona" y que la URL sea la de /exec.');
+        : 'Google no dejó entrar a la página. Revisa que la implementación tenga "Quién tiene acceso: Cualquier persona".');
     }
     try { j = await r.json(); }
-    catch (e) { throw new Error('El script no respondió como se esperaba (código ' + r.status + '). Revisa que pegaste el Code.gs nuevo, que autorizaste los permisos y que publicaste una versión nueva.'); }
-    if (j && j.ok) { S.scriptVer = j.version; return; }
+    catch (e) { throw new Error('El script no respondió como se esperaba (código ' + r.status + '). Revisa que autorizaste los permisos y que publicaste una versión nueva.'); }
+    if (j && j.ok) { S.scriptVer = j.version; return j; }
     var msg = (j && j.error) || 'respuesta no válida';
     if (msg === 'Clave incorrecta') msg = 'La clave no coincide con la de CLAVE en el script.';
-    else if (msg === 'Acción no válida' || /timeZone/.test(msg)) msg = 'La implementación todavía tiene el código viejo. En Apps Script: Implementar > Gestionar implementaciones > editar > Versión: Nueva versión.';
+    else if (msg === 'Acción no válida' || /timeZone/.test(msg)) msg = OLD_SCRIPT;
     throw new Error(msg);
+  }
+  function sheetSend(ops, key) {
+    return sheetCall({
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: key || S.key, action: 'ops', ops: ops })
+    });
+  }
+  async function sheetLoad() {
+    var j = await sheetCall();
+    if (!Array.isArray(j.rows)) throw new Error(OLD_SCRIPT);
+    return j.rows.map(function (r) { return { id: String(r.id), nombre: String(r.nombre), n: Number(r.n), ts: Number(r.ts) }; });
+  }
+
+  /* Lo que se ve = lo que hay en la hoja + los cambios propios que aún no llegaron a ella. */
+  function rebuild() {
+    var map = {}, order = [];
+    S.rows.forEach(function (e) { if (!map[e.id]) order.push(e.id); map[e.id] = e; });
+    if (S.key) S.queue.forEach(function (op) {
+      if (op.op === 'put') { if (!map[op.id]) order.push(op.id); map[op.id] = { id: op.id, nombre: op.nombre, n: op.n, ts: op.ts }; }
+      else if (op.op === 'del') delete map[op.id];
+    });
+    S.entries = order.filter(function (id) { return map[id]; }).map(function (id) { return map[id]; });
+    saveLocal();
+  }
+
+  async function refresh(manual) {
+    if (S.loading) return;
+    if (S.syncing) { setTimeout(refresh, 1500); return; }
+    S.loading = true;
+    var mut0 = S.mut;
+    if (manual) syncText('Actualizando…');
+    try {
+      var rows = await sheetLoad();
+      S.loading = false;
+      if (S.mut !== mut0 || S.syncing) { setTimeout(refresh, 1500); return; }   /* hubo cambios mientras se leía */
+      S.rows = rows;
+      rebuild(); renderAll();
+      if (S.mergeLocal && S.key) { var local = S.mergeLocal; S.mergeLocal = null; uploadMissing(local); }
+      if (!S.queue.length) syncText('Actualizado a las ' + fmtTime.format(new Date()) + (S.key ? ' · modo edición' : ' · solo lectura'), 'ok');
+    } catch (err) {
+      S.loading = false;
+      syncText('No se pudo leer la hoja de Google: ' + err.message + (S.entries.length ? ' Se muestra lo último que se cargó.' : ''), 'err');
+      renderHistory();
+    }
   }
 
   /* Cada cambio queda en una cola (guardada en el navegador) hasta que la hoja confirma que lo recibió. */
@@ -478,52 +536,69 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     return { op: 'put', id: e.id, nombre: e.nombre, n: e.n, ts: e.ts, fecha: serialDate(d), hora: serialTime(d) };
   }
   function enqueue(ops) {
-    if (!S.cfg) return;
+    if (!S.key) return;
+    S.mut++;
     S.queue = S.queue.concat(ops); lsSet(LS_QUEUE, S.queue);
     queueSync();
   }
 
   var syncTimer = null;
   function queueSync() {
-    if (!S.cfg) return;
+    if (!S.key) return;
     clearTimeout(syncTimer);
     syncTimer = setTimeout(syncNow, 700);
   }
 
   async function syncNow() {
-    if (!S.cfg || S.syncing) { if (S.cfg && S.syncing) queueSync(); return; }
-    if (!S.queue.length) { syncText('Google Sheets conectado · todo guardado.', 'ok'); return; }
+    if (!S.key || S.syncing) { if (S.key && S.syncing) queueSync(); return; }
+    if (!S.queue.length) return;
     S.syncing = true; syncText('Guardando en Google Sheets…');
-    var cfg0 = S.cfg, ops = S.queue.slice(0, 200);
+    var key0 = S.key, ops = S.queue.slice(0, 200);
     try {
       await sheetSend(ops);
-      if (S.cfg === cfg0) { S.queue = S.queue.slice(ops.length); lsSet(LS_QUEUE, S.queue); }
-      syncText('Google Sheets conectado · guardado a las ' + fmtTime.format(new Date()) + ' (script v' + (S.scriptVer || '?') + ')', 'ok');
+      if (S.key === key0) { S.queue = S.queue.slice(ops.length); lsSet(LS_QUEUE, S.queue); }
+      S.mut++;
+      syncText('Guardado en Google Sheets a las ' + fmtTime.format(new Date()) + ' · modo edición', 'ok');
       S.syncing = false;
       if (S.queue.length) queueSync();     /* hubo cambios mientras se enviaba */
       return;
     } catch (err) {
-      syncText('No se pudo guardar en Google Sheets: ' + err.message + ' (' + S.queue.length + ' cambios pendientes; tus datos siguen aquí y se reintentará al próximo cambio o al recargar).', 'err');
+      syncText('No se pudo guardar en Google Sheets: ' + err.message + ' (' + S.queue.length + ' cambios pendientes; siguen en este navegador y se reintentará al próximo cambio o al recargar).', 'err');
     }
     S.syncing = false;
   }
 
-  function connectSheets() {
-    var url = $('sheetUrl').value.trim(), key = $('sheetKey').value.trim();
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(url)) { syncText('La URL debe empezar con https://script.google.com/macros/s/ y terminar en /exec.', 'err'); return; }
-    if (!key) { syncText('Escribe la clave que pusiste en el script.', 'err'); return; }
-    S.cfg = { url: url, key: key }; lsSet(LS_CFG, S.cfg);
-    /* al conectar se envía todo el historial de aquí; si un registro ya está en la hoja, solo se actualiza */
-    S.queue = sorted(S.entries).reverse().map(putOp); lsSet(LS_QUEUE, S.queue);
-    renderNote();
-    syncNow();
+  /* registros que solo estaban en este navegador (de antes de compartir la página) se suben a la hoja */
+  function uploadMissing(local) {
+    var inSheet = {};
+    S.rows.forEach(function (e) { inSheet[e.id] = true; });
+    var missing = local.filter(function (e) { return !inSheet[e.id]; });
+    if (missing.length) { enqueue(sorted(missing).reverse().map(putOp)); rebuild(); renderAll(); }
   }
 
-  function disconnectSheets() {
-    S.cfg = null; lsDel(LS_CFG); S.queue = []; lsDel(LS_QUEUE);
-    $('sheetUrl').value = ''; $('sheetKey').value = '';
-    syncText('Google Sheets desconectado. Tu historial sigue en este navegador.');
-    renderNote();
+  async function login() {
+    var key = $('sheetKey').value.trim();
+    if (!key) { syncText('Escribe la clave que pusiste en el script.', 'err'); return; }
+    $('loginBtn').disabled = true; syncText('Comprobando la clave…');
+    try { await sheetSend([], key); }
+    catch (err) { syncText('No se pudo entrar: ' + err.message, 'err'); $('loginBtn').disabled = false; return; }
+    $('loginBtn').disabled = false;
+    var local = S.entries.slice();
+    S.key = key; lsSet(LS_KEY, key); $('sheetKey').value = '';
+    $('nombre').value = lsGet(LS_NAME, '') || '';
+    setStatus(idleStatus());
+    renderAll();
+    if (S.rows) uploadMissing(local); else S.mergeLocal = local;
+    syncText('Modo edición activo. Ya puedes registrar.', 'ok');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function logout() {
+    if (S.queue.length) { syncText('Hay ' + S.queue.length + ' cambios que aún no llegan a la hoja. Espera a que se guarden antes de salir.', 'err'); return; }
+    S.key = null; lsDel(LS_KEY); clearForm();
+    $('ownerCfg').open = false;
+    syncText('Saliste del modo edición. Ahora solo ves el progreso.');
+    renderAll();
   }
 
   /* ---------- acciones ---------- */
@@ -693,8 +768,10 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     var f = ev.target.files && ev.target.files[0]; ev.target.value = '';
     if (f) importFile(f);
   });
-  $('sheetSave').addEventListener('click', connectSheets);
-  $('sheetOff').addEventListener('click', disconnectSheets);
+  $('loginBtn').addEventListener('click', login);
+  $('sheetKey').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') login(); });
+  $('logoutBtn').addEventListener('click', logout);
+  $('refreshBtn').addEventListener('click', function () { refresh(true); });
 
   $('chips').addEventListener('click', function (ev) {
     var b = ev.target.closest('.chip'); if (!b) return;
@@ -719,16 +796,20 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
 
   /* ---------- arranque ---------- */
   $('today').textContent = new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
-  S.entries = lsGet(LS_ENTRIES, []);
-  S.cfg = lsGet(LS_CFG, null);
-  S.queue = S.cfg ? lsGet(LS_QUEUE, []) : [];
-  lsDel('contador-eventos:pendiente');   /* marca de la versión anterior */
+  S.entries = lsGet(LS_ENTRIES, []);          /* lo último que se vio, mientras llega la hoja */
+  S.key = lsGet(LS_KEY, null);
+  var oldCfg = lsGet('contador-eventos:sheets', null);   /* versión anterior: URL y clave escritas a mano */
+  if (!S.key && oldCfg && oldCfg.url === SHEET_URL && oldCfg.key) { S.key = oldCfg.key; lsSet(LS_KEY, S.key); }
+  lsDel('contador-eventos:sheets'); lsDel('contador-eventos:pendiente');
+  S.queue = S.key ? lsGet(LS_QUEUE, []) : [];
   $('nombre').value = lsGet(LS_NAME, '') || '';
-  if (S.cfg) { $('sheetUrl').value = S.cfg.url; $('sheetKey').value = S.cfg.key; }
   setStatus(idleStatus());
-  syncText(S.cfg ? 'Google Sheets conectado.' : 'Google Sheets: sin conectar.');
+  syncText('Cargando desde Google Sheets…');
   renderAll();
-  if (S.cfg) syncNow();
+  refresh();
+  if (S.key) syncNow();
+  setInterval(function () { if (!document.hidden) refresh(); }, 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
 </script>
 </body>
