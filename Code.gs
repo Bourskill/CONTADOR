@@ -38,6 +38,12 @@ function hoja_() {
   return sh;
 }
 
+// Algunas hojas nuevas no traen zona horaria: se usa la del script y, si no hay, la de Colombia.
+function zona_() {
+  var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || Session.getScriptTimeZone();
+  return tz ? String(tz) : 'America/Bogota';
+}
+
 function fila_(r, tz) {
   var p = Utilities.formatDate(new Date(Number(r.ts)), tz, 'yyyy-MM-dd-HH-mm-ss').split('-').map(Number);
   var fecha = Math.floor(Date.UTC(p[0], p[1] - 1, p[2]) / 86400000) + 25569;
@@ -57,7 +63,7 @@ function doPost(e) {
     if (d.action !== 'ops' || !Array.isArray(d.ops)) return salida_({ ok: false, error: 'Acción no válida' });
 
     var sh = hoja_();
-    var tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+    var tz = zona_();
     var ultima = sh.getLastRow();
     var filaDe = {};
     if (ultima > 1) {
