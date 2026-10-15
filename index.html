@@ -481,9 +481,11 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     catch (e) { throw new Error('El script no respondió como se esperaba (código ' + r.status + '). Revisa que autorizaste los permisos y que publicaste una versión nueva.'); }
     if (j && j.ok) { S.scriptVer = j.version; return j; }
     var msg = (j && j.error) || 'respuesta no válida';
-    if (msg === 'Clave incorrecta') msg = 'La clave no coincide con la de CLAVE en el script.';
+    var badKey = msg === 'Clave incorrecta';
+    if (badKey) msg = 'La clave no coincide con la de CLAVE en el script.';
     else if (msg === 'Acción no válida' || /timeZone/.test(msg)) msg = OLD_SCRIPT;
-    throw new Error(msg);
+    var err = new Error(msg); err.badKey = badKey;
+    throw err;
   }
   function sheetSend(ops, key) {
     return sheetCall({
@@ -568,6 +570,8 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
       if (S.queue.length) queueSync();     /* hubo cambios mientras se enviaba */
       return;
     } catch (err) {
+      S.syncing = false;
+      if (err.badKey) { dropKey(); return; }
       syncText('No se pudo guardar en Google Sheets: ' + err.message + ' (' + S.queue.length + ' cambios pendientes; siguen en este navegador y se reintentará al próximo cambio o al recargar).', 'err');
     }
     S.syncing = false;
@@ -596,6 +600,20 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     if (S.rows) uploadMissing(local); else S.mergeLocal = local;
     syncText('Modo edición activo. Ya puedes registrar.', 'ok');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* La hoja decide quién edita: si la clave guardada ya no sirve (por ejemplo, se cambió CLAVE en el script),
+     este navegador vuelve a solo lectura y descarta los cambios que no llegó a enviar. */
+  function dropKey() {
+    S.key = null; S.queue = []; lsDel(LS_KEY); lsDel(LS_QUEUE); clearForm();
+    if (S.rows) rebuild();
+    syncText('La clave guardada en este navegador ya no es válida. Ahora solo ves el progreso.', 'err');
+    renderAll();
+  }
+  async function checkKey() {
+    var key0 = S.key;
+    try { await sheetSend([], key0); }
+    catch (err) { if (err.badKey && S.key === key0) dropKey(); }
   }
 
   function logout() {
@@ -803,16 +821,14 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   $('today').textContent = new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   S.entries = lsGet(LS_ENTRIES, []);          /* lo último que se vio, mientras llega la hoja */
   S.key = lsGet(LS_KEY, null);
-  var oldCfg = lsGet('contador-eventos:sheets', null);   /* versión anterior: URL y clave escritas a mano */
-  if (!S.key && oldCfg && oldCfg.url === SHEET_URL && oldCfg.key) { S.key = oldCfg.key; lsSet(LS_KEY, S.key); }
-  lsDel('contador-eventos:sheets'); lsDel('contador-eventos:pendiente');
+  lsDel('contador-eventos:sheets'); lsDel('contador-eventos:pendiente');   /* datos de versiones anteriores */
   S.queue = S.key ? lsGet(LS_QUEUE, []) : [];
   $('nombre').value = lsGet(LS_NAME, '') || '';
   setStatus(idleStatus());
   syncText('Cargando desde Google Sheets…');
   renderAll();
   refresh();
-  if (S.key) syncNow();
+  if (S.key) { checkKey(); syncNow(); }
   setInterval(function () { if (!document.hidden) refresh(); }, 60000);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
