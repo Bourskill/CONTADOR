@@ -432,14 +432,27 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
   /* ---------- Google Sheets (Apps Script) ---------- */
   function syncText(msg, kind) { var el = $('syncState'); el.textContent = msg; el.className = 'sync-state' + (kind ? ' ' + kind : ''); }
 
+  /* Los errores salen ya explicados para mostrarlos tal cual en la tarjeta de Sheets. */
   async function sheetSend(ops) {
-    var r = await fetch(S.cfg.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ token: S.cfg.key, action: 'ops', ops: ops })
-    });
-    var j = await r.json();
-    if (!j || !j.ok) throw new Error((j && j.error) || 'respuesta no válida');
+    var r, j;
+    try {
+      r = await fetch(S.cfg.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ token: S.cfg.key, action: 'ops', ops: ops })
+      });
+    } catch (e) {
+      throw new Error(navigator.onLine === false
+        ? 'No hay conexión a internet.'
+        : 'Google no dejó entrar a la página. Revisa que la implementación tenga "Quién tiene acceso: Cualquier persona" y que la URL sea la de /exec.');
+    }
+    try { j = await r.json(); }
+    catch (e) { throw new Error('El script no respondió como se esperaba (código ' + r.status + '). Revisa que pegaste el Code.gs nuevo, que autorizaste los permisos y que publicaste una versión nueva.'); }
+    if (j && j.ok) return;
+    var msg = (j && j.error) || 'respuesta no válida';
+    if (msg === 'Clave incorrecta') msg = 'La clave no coincide con la de CLAVE en el script.';
+    else if (msg === 'Acción no válida') msg = 'La implementación todavía tiene el código viejo. En Apps Script: Implementar > Gestionar implementaciones > editar > Versión: Nueva versión.';
+    throw new Error(msg);
   }
 
   /* Cada cambio queda en una cola (guardada en el navegador) hasta que la hoja confirma que lo recibió. */
@@ -470,7 +483,7 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
       if (S.queue.length) queueSync();     /* hubo cambios mientras se enviaba */
       return;
     } catch (err) {
-      syncText('No se pudo guardar en Google Sheets (' + S.queue.length + ' cambios pendientes). Tus datos siguen aquí y se reintentará al próximo cambio o al recargar. Revisa la URL y la clave.', 'err');
+      syncText('No se pudo guardar en Google Sheets: ' + err.message + ' (' + S.queue.length + ' cambios pendientes; tus datos siguen aquí y se reintentará al próximo cambio o al recargar).', 'err');
     }
     S.syncing = false;
   }
