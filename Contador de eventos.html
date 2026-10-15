@@ -1,0 +1,622 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Contador de eventos</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Layout: una sola columna tipo marcador. Arriba el contador con − / +, debajo totales, historial por día y respaldo en Excel. */
+:root {
+  --bg: #E8EDEF;
+  --surface: #F6F8F8;
+  --fg: #13212A;
+  --muted: #566871;
+  --line: #C9D4D8;
+  --soft: #DDE5E8;
+  --accent: #0E7C6B;
+  --accent-fg: #FFFFFF;
+  --danger: #B3372B;
+  --font-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F171C; --surface: #17232A; --fg: #E3EDF0; --muted: #8DA0A8; --line: #27363E;
+    --soft: #1F2D35; --accent: #3FD1B5; --accent-fg: #06211C; --danger: #F08A7E;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F171C; --surface: #17232A; --fg: #E3EDF0; --muted: #8DA0A8; --line: #27363E;
+  --soft: #1F2D35; --accent: #3FD1B5; --accent-fg: #06211C; --danger: #F08A7E;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 1.9rem; letter-spacing: .02em; text-transform: uppercase; }
+.today { font-family: var(--font-data); font-size: .78rem; color: var(--muted); }
+
+.counter {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px 18px 18px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.counter.editing { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.editbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-weight: 600; color: var(--accent); }
+label.lbl { font-family: var(--font-data); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.name-field { display: flex; flex-direction: column; gap: 6px; }
+.field {
+  width: 100%; min-width: 0;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; font-size: 1.05rem; font-weight: 500;
+}
+.field::placeholder { color: var(--muted); font-weight: 400; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: 1px solid var(--line); background: transparent; border-radius: 999px;
+  padding: 4px 12px; font-size: .85rem; color: var(--muted);
+}
+.chip:hover { color: var(--fg); border-color: var(--muted); }
+
+.dial { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
+.step {
+  width: 68px; height: 68px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-family: var(--font-display); font-weight: 700; font-size: 2.6rem; line-height: 1;
+  border: 2px solid var(--fg); background: transparent;
+  touch-action: manipulation;
+}
+.step.plus { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.step:active { transform: scale(.94); }
+.step:disabled { opacity: .3; cursor: default; transform: none; }
+.readout { text-align: center; min-width: 0; }
+.num {
+  font-family: var(--font-display); font-weight: 800;
+  font-size: clamp(5.5rem, 26vw, 8.5rem); line-height: .88;
+  font-variant-numeric: tabular-nums;
+}
+.tally { height: 28px; margin-top: 6px; color: var(--muted); display: flex; justify-content: center; }
+.tally svg { height: 28px; width: auto; max-width: 100%; }
+
+details.adv { border-top: 1px solid var(--line); padding-top: 12px; }
+details.adv summary { cursor: pointer; font-weight: 600; font-size: .92rem; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 8px; }
+details.adv summary::-webkit-details-marker { display: none; }
+details.adv summary::before { content: "▸"; font-size: .8rem; transition: transform .15s; }
+details.adv[open] summary::before { transform: rotate(90deg); }
+details.adv summary:hover { color: var(--fg); }
+.adv-body { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
+.adv-row { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.adv-row .field { flex: 1 1 200px; }
+.adv-hint { font-size: .82rem; color: var(--muted); }
+.btn-sec {
+  border: 1px solid var(--line); background: transparent; border-radius: 8px;
+  padding: 10px 14px; font-weight: 600; font-size: .92rem;
+}
+.btn-sec:hover { border-color: var(--muted); }
+
+.confirm {
+  width: 100%; min-height: 54px; border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--accent-fg);
+  font-weight: 700; font-size: 1.05rem; letter-spacing: .01em;
+}
+.confirm:disabled { background: var(--soft); color: var(--muted); cursor: default; }
+.meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 28px; }
+.meta-actions { display: flex; gap: 14px; flex-shrink: 0; }
+.status { font-size: .85rem; color: var(--muted); }
+.status.err { color: var(--danger); }
+.link { background: none; border: 0; padding: 4px 0; color: var(--muted); font-size: .85rem; text-decoration: underline; text-underline-offset: 3px; }
+.link:hover { color: var(--fg); }
+.link.strong { color: var(--accent); font-weight: 700; }
+
+h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-size: .74rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+
+.totals { display: flex; flex-direction: column; gap: 8px; }
+.trow {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; text-align: left; width: 100%;
+}
+.trow[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.trow .tn { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.trow .th { font-family: var(--font-data); font-size: .75rem; color: var(--muted); display: block; font-weight: 400; }
+.trow .tt { font-family: var(--font-display); font-weight: 800; font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+
+.day { margin-top: 16px; }
+.day:first-of-type { margin-top: 0; }
+.day-h { display: flex; justify-content: space-between; font-family: var(--font-data); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.entry { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.entry.is-editing { background: var(--soft); }
+.entry .en { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.entry .et { font-family: var(--font-data); font-size: .78rem; color: var(--muted); display: block; font-weight: 400; }
+.entry .ea { font-family: var(--font-display); font-weight: 800; font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+.acts { display: flex; gap: 2px; }
+.act { background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; font-size: .8rem; color: var(--muted); }
+.act:hover { border-color: var(--line); color: var(--fg); }
+.act.sure { color: var(--danger); border-color: var(--danger); font-weight: 600; }
+
+.empty { border: 1px dashed var(--line); border-radius: 12px; padding: 22px 18px; color: var(--muted); text-align: center; }
+.empty strong { color: var(--fg); display: block; margin-bottom: 4px; }
+
+.data { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.data-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.data p { margin: 0; font-size: .85rem; color: var(--muted); }
+.data .btn-sec.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (max-width: 380px) {
+  .step { width: 58px; height: 58px; font-size: 2.2rem; }
+  .act { padding: 4px 6px; }
+}
+@media (prefers-reduced-motion: reduce) { .step:active { transform: none; } details.adv summary::before { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Contador de eventos</h1>
+    <span class="today" id="today"></span>
+  </header>
+
+  <section class="counter" id="counterCard" aria-label="Contador">
+    <div class="editbar" id="editbar" hidden>
+      <span>Editando un registro</span>
+      <button class="link" id="cancelEdit" type="button">Cancelar</button>
+    </div>
+
+    <div class="name-field">
+      <label class="lbl" for="nombre">Qué estás contando</label>
+      <input class="field" id="nombre" type="text" maxlength="60" autocomplete="off" placeholder="Ej: Partidas perdidas">
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <div class="dial">
+      <button class="step" id="minus" type="button" aria-label="Restar uno">&minus;</button>
+      <div class="readout">
+        <div class="num" id="num" aria-live="polite">0</div>
+        <div class="tally" id="tally" aria-hidden="true"></div>
+      </div>
+      <button class="step plus" id="plus" type="button" aria-label="Sumar uno">+</button>
+    </div>
+
+    <details class="adv" id="adv">
+      <summary>Opciones avanzadas</summary>
+      <div class="adv-body">
+        <label class="lbl" for="cuando">Fecha y hora del registro</label>
+        <div class="adv-row">
+          <input class="field" id="cuando" type="datetime-local">
+          <button class="btn-sec" id="nowBtn" type="button">Usar ahora</button>
+        </div>
+        <span class="adv-hint">Si lo dejas vacío, se usa la fecha y hora del momento en que confirmas. Sirve para anotar algo que pasó antes.</span>
+      </div>
+    </details>
+
+    <button class="confirm" id="confirm" type="button" disabled>Confirmar y guardar</button>
+    <div class="meta">
+      <span class="status" id="status" role="status"></span>
+      <span class="meta-actions">
+        <button class="link strong" id="undo" type="button" hidden>Deshacer</button>
+        <button class="link" id="reset" type="button" hidden>Poner en 0</button>
+      </span>
+    </div>
+  </section>
+
+  <section id="totalsSec" hidden>
+    <h2>Totales</h2>
+    <div class="totals" id="totals"></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2 id="histTitle">Historial</h2>
+      <button class="link" id="clearFilter" type="button" hidden>Ver todo</button>
+    </div>
+    <div id="history"></div>
+  </section>
+
+  <section class="data" aria-label="Respaldo en Excel">
+    <h2 style="margin:0">Respaldo en Excel</h2>
+    <div class="data-btns">
+      <button class="btn-sec primary" id="exportBtn" type="button" hidden>Descargar Excel</button>
+      <button class="btn-sec" id="importBtn" type="button">Importar Excel</button>
+      <input class="visually-hidden" id="importFile" type="file" accept=".xlsx,.xls,.csv" tabindex="-1" aria-label="Elegir archivo para importar">
+    </div>
+    <p id="storeNote"></p>
+    <p>Para verlo en Google Sheets, descarga el Excel, súbelo a Google Drive y ábrelo con Hojas de cálculo. El archivo trae el historial y una hoja de totales con fórmulas.</p>
+  </section>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var S = { n: 0, entries: [], filter: null, pending: null, db: null, dl: null, saving: false, editing: null, undo: null };
+  var LS_ENTRIES = 'contador-eventos:v1', LS_NAME = 'contador-eventos:nombre';
+  var DEFAULT_STATUS = 'Se guarda con la fecha y hora de este momento.';
+
+  function lsGet(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  var fmtTime = new Intl.DateTimeFormat('es-CO', { hour: '2-digit', minute: '2-digit' });
+  var fmtDay = new Intl.DateTimeFormat('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+  var fmtFull = new Intl.DateTimeFormat('es-CO', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  function dayKey(ts) { var d = new Date(ts); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); }
+  function dayLabel(ts) {
+    var now = Date.now();
+    if (dayKey(ts) === dayKey(now)) return 'Hoy';
+    if (dayKey(ts) === dayKey(now - 86400000)) return 'Ayer';
+    return fmtDay.format(new Date(ts));
+  }
+  function toLocalInput(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function sorted(list) { return list.slice().sort(function (a, b) { return b.ts - a.ts; }); }
+
+  /* ---------- marcas de conteo (grupos de 5) ---------- */
+  function tallySvg(n) {
+    if (n < 1 || n > 25) return '';
+    var full = Math.floor(n / 5), rest = n % 5, x = 0, out = '';
+    for (var g = 0; g < full; g++) {
+      for (var i = 0; i < 4; i++) out += '<line x1="' + (x + 4 + i * 7) + '" y1="3" x2="' + (x + 4 + i * 7) + '" y2="25"/>';
+      out += '<line x1="' + x + '" y1="21" x2="' + (x + 33) + '" y2="7"/>';
+      x += 42;
+    }
+    for (var j = 0; j < rest; j++) out += '<line x1="' + (x + 4 + j * 7) + '" y1="3" x2="' + (x + 4 + j * 7) + '" y2="25"/>';
+    var w = x + (rest ? 4 + rest * 7 : 0);
+    return '<svg viewBox="0 0 ' + Math.max(w, 8) + ' 28" width="' + Math.max(w, 8) + '" height="28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">' + out + '</svg>';
+  }
+
+  /* ---------- render ---------- */
+  function whenValue() {
+    var v = $('cuando').value;
+    if (!v) return null;
+    var t = new Date(v).getTime();
+    return isNaN(t) ? null : t;
+  }
+
+  var statusTimer = null;
+  function setStatus(msg, isErr) { var el = $('status'); el.textContent = msg; el.className = 'status' + (isErr ? ' err' : ''); }
+  function idleStatus() {
+    if (S.editing) return 'Cambia lo que necesites y pulsa Guardar cambios.';
+    var w = whenValue();
+    return w ? 'Se guardará con fecha elegida: ' + fmtFull.format(new Date(w)) + '.' : DEFAULT_STATUS;
+  }
+  function flash(msg, isErr) {
+    setStatus(msg, isErr);
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(function () { setStatus(idleStatus()); }, 4500);
+  }
+
+  function renderCounter() {
+    var name = $('nombre').value.trim();
+    $('num').textContent = S.n;
+    $('tally').innerHTML = tallySvg(S.n);
+    $('minus').disabled = S.n === 0;
+    $('confirm').disabled = !(S.n > 0 && name) || S.saving;
+    $('confirm').textContent = S.saving ? 'Guardando…' : (S.editing ? 'Guardar cambios' : (S.n > 0 ? 'Confirmar y guardar (+' + S.n + ')' : 'Confirmar y guardar'));
+    $('reset').hidden = S.n === 0;
+    $('editbar').hidden = !S.editing;
+    $('counterCard').classList.toggle('editing', !!S.editing);
+  }
+
+  function renderChips() {
+    var seen = [], list = sorted(S.entries);
+    for (var i = 0; i < list.length && seen.length < 6; i++) if (seen.indexOf(list[i].nombre) < 0) seen.push(list[i].nombre);
+    $('chips').innerHTML = seen.map(function (n) { return '<button type="button" class="chip" data-name="' + esc(n) + '">' + esc(n) + '</button>'; }).join('');
+  }
+
+  function renderTotals() {
+    var map = {}, order = [], todayK = dayKey(Date.now());
+    sorted(S.entries).forEach(function (e) {
+      if (!map[e.nombre]) { map[e.nombre] = { total: 0, hoy: 0, last: e.ts }; order.push(e.nombre); }
+      map[e.nombre].total += e.n;
+      if (dayKey(e.ts) === todayK) map[e.nombre].hoy += e.n;
+    });
+    $('totalsSec').hidden = order.length === 0;
+    $('totals').innerHTML = order.map(function (n) {
+      var m = map[n];
+      return '<button type="button" class="trow" data-filter="' + esc(n) + '" aria-pressed="' + (S.filter === n) + '">' +
+        '<span class="tn">' + esc(n) + '<span class="th">hoy +' + m.hoy + ' · última ' + esc(dayLabel(m.last).toLowerCase()) + ' ' + fmtTime.format(new Date(m.last)) + '</span></span>' +
+        '<span class="tt">' + m.total + '</span></button>';
+    }).join('');
+  }
+
+  function renderHistory() {
+    var list = sorted(S.entries);
+    if (S.filter) list = list.filter(function (e) { return e.nombre === S.filter; });
+    $('clearFilter').hidden = !S.filter;
+    $('histTitle').textContent = S.filter ? 'Historial · ' + S.filter : 'Historial';
+    if (!list.length) {
+      $('history').innerHTML = '<div class="empty"><strong>Todavía no hay registros</strong>Escribe qué cuentas, suma con + y pulsa Confirmar. Cada registro aparecerá aquí con su fecha y hora.</div>';
+      return;
+    }
+    var html = '', cur = null, groups = [];
+    list.forEach(function (e) {
+      var k = dayKey(e.ts);
+      if (k !== cur) { groups.push({ label: dayLabel(e.ts), items: [], sum: 0 }); cur = k; }
+      var g = groups[groups.length - 1]; g.items.push(e); g.sum += e.n;
+    });
+    groups.forEach(function (g) {
+      html += '<div class="day"><div class="day-h"><span>' + esc(g.label) + '</span><span>+' + g.sum + '</span></div>';
+      g.items.forEach(function (e) {
+        var sure = S.pending === e.id;
+        html += '<div class="entry' + (S.editing === e.id ? ' is-editing' : '') + '"><span class="en">' + esc(e.nombre) + '<span class="et">' + fmtTime.format(new Date(e.ts)) + '</span></span>' +
+          '<span class="ea">+' + e.n + '</span>' +
+          '<span class="acts"><button type="button" class="act" data-edit="' + esc(e.id) + '">Editar</button>' +
+          '<button type="button" class="act' + (sure ? ' sure' : '') + '" data-del="' + esc(e.id) + '">' + (sure ? '¿Borrar?' : 'Borrar') + '</button></span></div>';
+      });
+      html += '</div>';
+    });
+    $('history').innerHTML = html;
+  }
+
+  function renderNote() {
+    $('storeNote').textContent = S.db
+      ? 'Tu historial se guarda en esta página y se conserva al cerrarla. El Excel es una copia extra por si quieres respaldarlo o analizarlo.'
+      : 'Tu historial se guarda solo en este navegador. Descarga un Excel de vez en cuando para no perderlo.';
+  }
+
+  function renderAll() { renderCounter(); renderChips(); renderTotals(); renderHistory(); renderNote(); }
+
+  /* ---------- almacenamiento ---------- */
+  async function putEntry(rec, id) {
+    if (S.db) {
+      if (id) await S.db.doc('registros/' + id).set({ nombre: rec.nombre, n: rec.n, ts: rec.ts });
+      else await S.db.collection('registros').add({ nombre: rec.nombre, n: rec.n, ts: rec.ts });
+    } else {
+      if (id) {
+        S.entries = S.entries.map(function (e) { return e.id === id ? { id: id, nombre: rec.nombre, n: rec.n, ts: rec.ts } : e; });
+      } else {
+        S.entries.push({ id: 'l' + rec.ts + Math.random().toString(36).slice(2, 7), nombre: rec.nombre, n: rec.n, ts: rec.ts });
+      }
+      lsSet(LS_ENTRIES, S.entries);
+    }
+  }
+
+  function clearForm() {
+    S.n = 0; S.editing = null;
+    $('cuando').value = '';
+    $('adv').open = false;
+  }
+
+  /* ---------- acciones ---------- */
+  async function save() {
+    var nombre = $('nombre').value.trim();
+    if (!nombre || S.n < 1 || S.saving) return;
+    var ts = whenValue() || Date.now();
+    var rec = { nombre: nombre, n: S.n, ts: ts };
+    var wasEditing = S.editing;
+    S.saving = true; renderCounter();
+    try {
+      await putEntry(rec, wasEditing);
+      lsSet(LS_NAME, nombre);
+      flash(wasEditing ? 'Cambios guardados.' : 'Guardado: ' + nombre + ' +' + rec.n);
+      clearForm();
+    } catch (e) {
+      flash('No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.', true);
+    }
+    S.saving = false;
+    renderAll();
+  }
+
+  function startEdit(id) {
+    var e = S.entries.filter(function (x) { return x.id === id; })[0];
+    if (!e) return;
+    S.editing = id; S.pending = null;
+    $('nombre').value = e.nombre; S.n = e.n;
+    $('cuando').value = toLocalInput(e.ts);
+    $('adv').open = true;
+    setStatus(idleStatus());
+    renderAll();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelEdit() {
+    clearForm();
+    $('nombre').value = lsGet(LS_NAME, '') || '';
+    setStatus(idleStatus());
+    renderAll();
+  }
+
+  var undoTimer = null;
+  async function remove(id) {
+    var rec = S.entries.filter(function (x) { return x.id === id; })[0];
+    if (!rec) { S.pending = null; renderHistory(); return; }
+    try {
+      if (S.db) { await S.db.doc('registros/' + id).delete(); }
+      else { S.entries = S.entries.filter(function (e) { return e.id !== id; }); lsSet(LS_ENTRIES, S.entries); }
+      if (S.editing === id) { cancelEdit(); }
+      S.undo = { id: rec.id, nombre: rec.nombre, n: rec.n, ts: rec.ts };
+      $('undo').hidden = false;
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(function () { S.undo = null; $('undo').hidden = true; }, 10000);
+      flash('Registro borrado: ' + rec.nombre + ' +' + rec.n);
+    } catch (e) { flash('No se pudo borrar.', true); }
+    S.pending = null;
+    renderAll();
+  }
+
+  async function undoDelete() {
+    var r = S.undo; if (!r) return;
+    S.undo = null; $('undo').hidden = true; clearTimeout(undoTimer);
+    try {
+      if (S.db) { await S.db.doc('registros/' + r.id).set({ nombre: r.nombre, n: r.n, ts: r.ts }); }
+      else { S.entries.push(r); lsSet(LS_ENTRIES, S.entries); }
+      flash('Registro recuperado.');
+    } catch (e) { flash('No se pudo recuperar el registro.', true); }
+    renderAll();
+  }
+
+  /* ---------- Excel: exportar e importar ---------- */
+  function serialDate(d) { return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000) + 25569; }
+  function serialTime(d) { return (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()) / 86400; }
+
+  function exportXlsx() {
+    if (!window.XLSX) { flash('No se pudo cargar el generador de Excel. Recarga la página.', true); return; }
+    if (!S.dl) return;
+    if (!S.entries.length) { flash('Aún no hay registros para exportar.', true); return; }
+    var list = sorted(S.entries).reverse();
+    var rows = [['Fecha', 'Hora', 'Evento', 'Cantidad']];
+    list.forEach(function (e) {
+      var d = new Date(e.ts);
+      rows.push([{ t: 'n', v: serialDate(d), z: 'dd/mm/yyyy' }, { t: 'n', v: serialTime(d), z: 'hh:mm:ss' }, e.nombre, e.n]);
+    });
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 32 }, { wch: 10 }];
+
+    var totals = {}, names = [];
+    list.forEach(function (e) { if (totals[e.nombre] === undefined) { totals[e.nombre] = 0; names.push(e.nombre); } totals[e.nombre] += e.n; });
+    var trows = [['Evento', 'Total']], grand = 0;
+    names.forEach(function (n, i) {
+      grand += totals[n];
+      trows.push([n, { t: 'n', f: 'SUMIF(Historial!C:C,A' + (i + 2) + ',Historial!D:D)', v: totals[n] }]);
+    });
+    trows.push(['TOTAL', { t: 'n', f: 'SUM(B2:B' + (names.length + 1) + ')', v: grand }]);
+    var ws2 = XLSX.utils.aoa_to_sheet(trows);
+    ws2['!cols'] = [{ wch: 32 }, { wch: 10 }];
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Historial');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Totales');
+    var buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var now = new Date();
+    var filename = 'contador-eventos-' + now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + '.xlsx';
+    S.dl.save({ filename: filename, data: buf }).then(function () {
+      flash('Excel guardado: ' + filename);
+    }).catch(function (err) {
+      if (err && err.code === 'declined') return;
+      flash('No se pudo descargar el archivo.', true);
+    });
+  }
+
+  function parseTs(fecha, hora) {
+    var y, m, d, sec = 0;
+    if (typeof fecha === 'number') {
+      var dt = new Date((Math.floor(fecha) - 25569) * 86400000);
+      y = dt.getUTCFullYear(); m = dt.getUTCMonth(); d = dt.getUTCDate();
+    } else {
+      var mm = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(String(fecha || ''));
+      if (!mm) return NaN;
+      d = +mm[1]; m = +mm[2] - 1; y = +mm[3];
+    }
+    if (typeof hora === 'number') sec = Math.round((hora % 1) * 86400);
+    else {
+      var hm = /(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(String(hora || ''));
+      if (hm) sec = (+hm[1]) * 3600 + (+hm[2]) * 60 + (+(hm[3] || 0));
+    }
+    return new Date(y, m, d, 0, 0, sec).getTime();
+  }
+
+  async function importFile(file) {
+    if (!window.XLSX) { flash('No se pudo cargar el lector de Excel. Recarga la página.', true); return; }
+    try {
+      var buf = await file.arrayBuffer();
+      var wb = XLSX.read(buf, { type: 'array' });
+      var sheetName = wb.SheetNames.indexOf('Historial') >= 0 ? 'Historial' : wb.SheetNames[0];
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true });
+      var have = {};
+      S.entries.forEach(function (e) { have[e.nombre + '|' + Math.floor(e.ts / 1000)] = true; });
+      var add = [], skipped = 0;
+      rows.slice(0, 5001).forEach(function (r, i) {
+        if (!r || (i === 0 && typeof r[0] === 'string' && /fecha/i.test(r[0]))) return;
+        var nombre = String(r[2] == null ? '' : r[2]).trim().slice(0, 60);
+        var n = Math.round(Number(r[3]));
+        var ts = parseTs(r[0], r[1]);
+        if (!nombre || !(n > 0) || isNaN(ts)) { skipped++; return; }
+        var key = nombre + '|' + Math.floor(ts / 1000);
+        if (have[key]) { skipped++; return; }
+        have[key] = true; add.push({ nombre: nombre, n: n, ts: ts });
+      });
+      if (!add.length) { flash('No se encontraron registros nuevos en el archivo.', true); return; }
+      setStatus('Importando ' + add.length + ' registros…');
+      for (var i = 0; i < add.length; i++) await putEntry(add[i], null);
+      flash('Importados ' + add.length + ' registros' + (skipped ? ' (' + skipped + ' omitidos por repetidos o incompletos).' : '.'));
+      renderAll();
+    } catch (err) {
+      flash('No se pudo leer el archivo. Usa un Excel descargado desde esta página.', true);
+    }
+  }
+
+  /* ---------- eventos ---------- */
+  $('plus').addEventListener('click', function () { S.n = Math.min(S.n + 1, 9999); renderCounter(); });
+  $('minus').addEventListener('click', function () { S.n = Math.max(S.n - 1, 0); renderCounter(); });
+  $('reset').addEventListener('click', function () { S.n = 0; renderCounter(); });
+  $('confirm').addEventListener('click', save);
+  $('nombre').addEventListener('input', renderCounter);
+  $('nombre').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') save(); });
+  $('cuando').addEventListener('input', function () { setStatus(idleStatus()); });
+  $('nowBtn').addEventListener('click', function () { $('cuando').value = ''; setStatus(idleStatus()); });
+  $('cancelEdit').addEventListener('click', cancelEdit);
+  $('undo').addEventListener('click', undoDelete);
+  $('exportBtn').addEventListener('click', exportXlsx);
+  $('importBtn').addEventListener('click', function () { $('importFile').click(); });
+  $('importFile').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0]; ev.target.value = '';
+    if (f) importFile(f);
+  });
+
+  $('chips').addEventListener('click', function (ev) {
+    var b = ev.target.closest('.chip'); if (!b) return;
+    $('nombre').value = b.getAttribute('data-name'); renderCounter();
+  });
+  $('totals').addEventListener('click', function (ev) {
+    var b = ev.target.closest('.trow'); if (!b) return;
+    var n = b.getAttribute('data-filter');
+    S.filter = S.filter === n ? null : n; renderTotals(); renderHistory();
+  });
+  $('clearFilter').addEventListener('click', function () { S.filter = null; renderTotals(); renderHistory(); });
+  $('history').addEventListener('click', function (ev) {
+    var ed = ev.target.closest('[data-edit]');
+    if (ed) { startEdit(ed.getAttribute('data-edit')); return; }
+    var b = ev.target.closest('[data-del]'); if (!b) return;
+    var id = b.getAttribute('data-del');
+    if (S.pending === id) { remove(id); } else { S.pending = id; renderHistory(); }
+  });
+  document.addEventListener('click', function (ev) {
+    if (S.pending && !ev.target.closest('[data-del]')) { S.pending = null; renderHistory(); }
+  });
+
+  /* ---------- arranque ---------- */
+  $('today').textContent = new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
+  S.entries = lsGet(LS_ENTRIES, []);
+  $('nombre').value = lsGet(LS_NAME, '') || '';
+  setStatus(idleStatus());
+  renderAll();
+
+  /* Con db el historial queda guardado fuera de la página. Sin db usa este navegador. */
+  var useCap = function (n) { return (window.claude && window.claude.use) ? window.claude.use(n) : Promise.resolve(null); };
+  useCap('downloads').then(function (dl) { S.dl = dl; $('exportBtn').hidden = !dl; }).catch(function () {});
+  useCap('db').then(function (db) {
+    if (!db) return;
+    S.db = db; renderNote();
+    db.collection('registros').orderBy('ts', 'desc').limit(1000).onSnapshot(function (snap) {
+      S.entries = snap.docs.map(function (d) { var x = d.data(); return { id: d.id, nombre: String(x.nombre || ''), n: Number(x.n) || 0, ts: Number(x.ts) || 0 }; });
+      if (S.filter && !S.entries.some(function (e) { return e.nombre === S.filter; })) S.filter = null;
+      renderAll();
+    }, function () { S.db = null; renderNote(); flash('No se pudo conectar el guardado de la página. Se usará este navegador.', true); });
+  }).catch(function () {});
+})();
+</script>
+
+</body></html>
