@@ -409,7 +409,9 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
     $('clearFilter').hidden = !S.filter;
     $('histTitle').textContent = S.filter ? 'Historial · ' + S.filter : 'Historial';
     if (!list.length) {
-      $('history').innerHTML = !S.rows && !S.entries.length
+      $('history').innerHTML = S.loadError && !S.rows
+        ? '<div class="empty"><strong>No se pudo cargar el historial</strong>' + esc(S.loadError) + '</div>'
+        : !S.rows && !S.entries.length
         ? '<div class="empty"><strong>Cargando registros…</strong>Se están leyendo desde la hoja de Google.</div>'
         : '<div class="empty"><strong>Todavía no hay registros</strong>' + (S.key
           ? 'Escribe qué cuentas, suma con + y pulsa Confirmar. Cada registro aparecerá aquí con su fecha y hora.'
@@ -518,12 +520,15 @@ h2 { margin: 0 0 10px; font-family: var(--font-data); font-weight: 500; font-siz
       var rows = await sheetLoad();
       S.loading = false;
       if (S.mut !== mut0 || S.syncing) { setTimeout(refresh, 1500); return; }   /* hubo cambios mientras se leía */
-      S.rows = rows;
+      S.rows = rows; S.loadError = null;
       rebuild(); renderAll();
       if (S.mergeLocal && S.key) { var local = S.mergeLocal; S.mergeLocal = null; uploadMissing(local); }
       if (!S.queue.length) syncText('Actualizado a las ' + fmtTime.format(new Date()) + (S.key ? ' · modo edición' : ' · solo lectura'), 'ok');
     } catch (err) {
       S.loading = false;
+      S.loadError = err.message === OLD_SCRIPT
+        ? 'La hoja de Google todavía no tiene publicada la versión que permite leer los registros.'
+        : 'Revisa tu conexión y pulsa Actualizar.';
       syncText('No se pudo leer la hoja de Google: ' + err.message + (S.entries.length ? ' Se muestra lo último que se cargó.' : ''), 'err');
       renderHistory();
     }
